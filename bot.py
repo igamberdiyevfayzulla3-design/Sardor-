@@ -8,37 +8,38 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import anthropic
+import google.generativeai as genai
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "YOUR_ANTHROPIC_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_KEY")
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
-ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # ─── States ───────────────────────────────────────────────
 class Form(StatesGroup):
-    tutor_chat    = State()
-    test_waiting  = State()
-    test_count    = State()
-    quiz_subject  = State()
-    quiz_active   = State()
-    konspekt      = State()
-    flashcard     = State()
-    tarjima       = State()
-    formula       = State()
+    tutor_chat   = State()
+    test_waiting = State()
+    test_count   = State()
+    quiz_subject = State()
+    quiz_active  = State()
+    konspekt     = State()
+    flashcard    = State()
+    tarjima      = State()
+    formula      = State()
 
 # ─── AI helper ────────────────────────────────────────────
-def ask_claude(system: str, user: str, history: list = []) -> str:
-    messages = history + [{"role": "user", "content": user}]
-    resp = ai.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=1500,
-        system=system,
-        messages=messages,
-    )
-    return resp.content[0].text
+def ask_gemini(system: str, user: str, history: list = []) -> str:
+    chat = model.start_chat(history=[
+        {"role": ("user" if m["role"] == "user" else "model"), "parts": [m["content"]]}
+        for m in history
+    ])
+    full_prompt = f"{system}\n\n{user}" if not history else user
+    resp = chat.send_message(full_prompt)
+    return resp.text
 
 # ─── System prompts ───────────────────────────────────────
 SYS = {
@@ -78,7 +79,7 @@ SYS = {
     ),
 }
 
-# ─── Main Menu ────────────────────────────────────────────
+# ─── Keyboards ────────────────────────────────────────────
 def main_menu():
     kb = InlineKeyboardBuilder()
     buttons = [
@@ -141,7 +142,7 @@ async def tutor_answer(msg: Message, state: FSMContext):
     history = data.get("history", [])
     thinking = await msg.answer("💭 O'ylanmoqda...")
     try:
-        reply = ask_claude(SYS["tutor"], msg.text, history[-8:])
+        reply = ask_gemini(SYS["tutor"], msg.text, history[-8:])
         history.append({"role": "user", "content": msg.text})
         history.append({"role": "assistant", "content": reply})
         await state.update_data(history=history)
@@ -179,7 +180,7 @@ async def test_generate(cb: CallbackQuery, state: FSMContext):
     text = data.get("test_text", "")
     await cb.message.edit_text(f"⏳ {n} ta savol yaratilmoqda...")
     try:
-        raw = ask_claude(SYS["test"], f"{text}\n\nYuqoridagi matndan {n} ta test savoli yarating.")
+        raw = ask_gemini(SYS["test"], f"{text}\n\nYuqoridagi matndan {n} ta test savoli yarating.")
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         parsed = json.loads(clean)
         questions = parsed.get("questions", [])
@@ -264,7 +265,7 @@ async def send_quiz_question(msg, state, subject):
     total = data.get("quiz_total", 0)
     wait = await msg.answer("⏳ Savol tayyorlanmoqda...")
     try:
-        raw = ask_claude(SYS["quiz"], f"{subject} fanidan savol bering")
+        raw = ask_gemini(SYS["quiz"], f"{subject} fanidan savol bering")
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         q = json.loads(clean)
         await state.update_data(quiz_q=q)
@@ -289,7 +290,6 @@ async def quiz_answer(cb: CallbackQuery, state: FSMContext):
     q = data.get("quiz_q", {})
     score = data.get("quiz_score", 0)
     total = data.get("quiz_total", 0) + 1
-    subject = data.get("quiz_subject", "Fan")
     correct = q.get("correct", 0)
     if j == correct:
         score += 1
@@ -338,7 +338,7 @@ async def konspekt_start(cb: CallbackQuery, state: FSMContext):
 async def konspekt_make(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Konspekt yaratilmoqda...")
     try:
-        result = ask_claude(SYS["konspekt"], msg.text)
+        result = ask_gemini(SYS["konspekt"], msg.text)
         await wait.delete()
         await msg.answer(result, reply_markup=back_btn())
     except Exception as e:
@@ -357,7 +357,7 @@ async def flashcard_start(cb: CallbackQuery, state: FSMContext):
 async def flashcard_make(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Kartalar yaratilmoqda...")
     try:
-        raw = ask_claude(SYS["flashcard"], msg.text)
+        raw = ask_gemini(SYS["flashcard"], msg.text)
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         data = json.loads(clean)
         cards = data.get("cards", [])
@@ -412,8 +412,7 @@ async def card_next(cb: CallbackQuery, state: FSMContext):
 async def tarjima_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.tarjima)
     await cb.message.edit_text(
-        "🌐 *Tarjima va Lug'at*\n\nSo'z yoki matn yuboring.\n"
-        "O'zbek ↔ Ingliz ↔ Rus",
+        "🌐 *Tarjima va Lug'at*\n\nSo'z yoki matn yuboring.\nO'zbek ↔ Ingliz ↔ Rus",
         reply_markup=back_btn(), parse_mode="Markdown"
     )
 
@@ -421,7 +420,7 @@ async def tarjima_start(cb: CallbackQuery, state: FSMContext):
 async def tarjima_do(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Tarjima qilinmoqda...")
     try:
-        result = ask_claude(SYS["tarjima"], msg.text)
+        result = ask_gemini(SYS["tarjima"], msg.text)
         await wait.delete()
         await msg.answer(result, reply_markup=back_btn())
     except Exception as e:
@@ -432,13 +431,12 @@ async def tarjima_do(msg: Message, state: FSMContext):
 async def formula_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.formula)
     kb = InlineKeyboardBuilder()
-    quick = ["Pifagor teoremasi", "F=ma", "E=mc²", "Ohm qonuni", "Kvadrat tenglama"]
-    for q in quick:
+    for q in ["Pifagor teoremasi", "F=ma", "E=mc²", "Ohm qonuni", "Kvadrat tenglama"]:
         kb.button(text=q, callback_data=f"formula_{q}")
     kb.adjust(2)
     kb.button(text="🏠 Bosh menyu", callback_data="menu")
     await cb.message.edit_text(
-        "⚗️ *Formula Yordamchisi*\n\nFormula yoki mavzu yuboring, yoki tez tugmalardan tanlang:",
+        "⚗️ *Formula Yordamchisi*\n\nFormula yoki mavzu yuboring:",
         reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
 
@@ -447,7 +445,7 @@ async def formula_quick(cb: CallbackQuery, state: FSMContext):
     topic = cb.data.split("_", 1)[1]
     await cb.message.edit_text(f"⏳ {topic} tayyorlanmoqda...")
     try:
-        result = ask_claude(SYS["formula"], topic)
+        result = ask_gemini(SYS["formula"], topic)
         await cb.message.edit_text(result, reply_markup=back_btn())
     except Exception as e:
         await cb.message.edit_text(f"Xatolik: {e}", reply_markup=back_btn())
@@ -456,13 +454,13 @@ async def formula_quick(cb: CallbackQuery, state: FSMContext):
 async def formula_ask(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Tayyorlanmoqda...")
     try:
-        result = ask_claude(SYS["formula"], msg.text)
+        result = ask_gemini(SYS["formula"], msg.text)
         await wait.delete()
         await msg.answer(result, reply_markup=back_btn())
     except Exception as e:
         await wait.edit_text(f"Xatolik: {e}")
 
-# ─── /menu command ────────────────────────────────────────
+# ─── /menu ────────────────────────────────────────────────
 @dp.message(Command("menu"))
 async def cmd_menu(msg: Message, state: FSMContext):
     await state.clear()
@@ -470,8 +468,9 @@ async def cmd_menu(msg: Message, state: FSMContext):
 
 # ─── Run ──────────────────────────────────────────────────
 async def main():
-    print("🤖 Ziyrak Study Bot ishga tushdi!")
+    print("🤖 Ziyrak Study Bot (Gemini) ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
