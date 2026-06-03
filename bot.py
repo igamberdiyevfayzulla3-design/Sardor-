@@ -11,8 +11,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_KEY")
-MODEL = "mistralai/mistral-7b-instruct:free"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_GROQ_KEY")
+MODEL = "llama-3.1-8b-instant"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -36,9 +36,9 @@ def ask_ai(system: str, user: str, history: list = []) -> str:
     messages.append({"role": "user", "content": user})
 
     resp = httpx.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+    "https://api.groq.com/openai/v1/chat/completions",
+    headers={
+        "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json",
         },
         json={"model": MODEL, "messages": messages},
