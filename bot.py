@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+import httpx
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
@@ -8,13 +9,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import google.generativeai as genai
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_KEY")
-
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash-exp")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_KEY")
+MODEL = "meta-llama/llama-3.1-8b-instruct:free"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -32,14 +30,22 @@ class Form(StatesGroup):
     formula      = State()
 
 # ─── AI helper ────────────────────────────────────────────
-def ask_gemini(system: str, user: str, history: list = []) -> str:
-    chat = model.start_chat(history=[
-        {"role": ("user" if m["role"] == "user" else "model"), "parts": [m["content"]]}
-        for m in history
-    ])
-    full_prompt = f"{system}\n\n{user}" if not history else user
-    resp = chat.send_message(full_prompt)
-    return resp.text
+def ask_ai(system: str, user: str, history: list = []) -> str:
+    messages = [{"role": "system", "content": system}]
+    messages += history
+    messages.append({"role": "user", "content": user})
+
+    resp = httpx.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={"model": MODEL, "messages": messages},
+        timeout=60,
+    )
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
 
 # ─── System prompts ───────────────────────────────────────
 SYS = {
@@ -128,12 +134,9 @@ async def tutor_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.tutor_chat)
     await state.update_data(history=[])
     await cb.message.edit_text(
-        "🧠 *AI Tutor*\n\n"
-        "Istalgan fan yoki mavzu bo'yicha savol bering!\n"
-        "Matematika, Fizika, Tarix, Kimyo...\n\n"
-        "Chiqish uchun /menu yozing.",
-        reply_markup=back_btn(),
-        parse_mode="Markdown"
+        "🧠 *AI Tutor*\n\nIstalgan fan yoki mavzu bo'yicha savol bering!\n"
+        "Matematika, Fizika, Tarix, Kimyo...\n\nChiqish uchun /menu yozing.",
+        reply_markup=back_btn(), parse_mode="Markdown"
     )
 
 @dp.message(Form.tutor_chat)
@@ -142,7 +145,7 @@ async def tutor_answer(msg: Message, state: FSMContext):
     history = data.get("history", [])
     thinking = await msg.answer("💭 O'ylanmoqda...")
     try:
-        reply = ask_gemini(SYS["tutor"], msg.text, history[-8:])
+        reply = ask_ai(SYS["tutor"], msg.text, history[-8:])
         history.append({"role": "user", "content": msg.text})
         history.append({"role": "assistant", "content": reply})
         await state.update_data(history=history)
@@ -156,11 +159,9 @@ async def tutor_answer(msg: Message, state: FSMContext):
 async def test_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.test_waiting)
     await cb.message.edit_text(
-        "📝 *Test Generator*\n\n"
-        "O'qish materialingizni yuboring.\n"
+        "📝 *Test Generator*\n\nO'qish materialingizni yuboring.\n"
         "Matn, paragraf yoki mavzu yozing — men test yarataman!",
-        reply_markup=back_btn(),
-        parse_mode="Markdown"
+        reply_markup=back_btn(), parse_mode="Markdown"
     )
 
 @dp.message(Form.test_waiting)
@@ -180,7 +181,7 @@ async def test_generate(cb: CallbackQuery, state: FSMContext):
     text = data.get("test_text", "")
     await cb.message.edit_text(f"⏳ {n} ta savol yaratilmoqda...")
     try:
-        raw = ask_gemini(SYS["test"], f"{text}\n\nYuqoridagi matndan {n} ta test savoli yarating.")
+        raw = ask_ai(SYS["test"], f"{text}\n\nYuqoridagi matndan {n} ta test savoli yarating.")
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         parsed = json.loads(clean)
         questions = parsed.get("questions", [])
@@ -188,7 +189,7 @@ async def test_generate(cb: CallbackQuery, state: FSMContext):
         await state.set_state(Form.quiz_active)
         await send_test_question(cb.message, state, questions, 0)
     except Exception as e:
-        await cb.message.edit_text(f"Xatolik yuz berdi: {e}", reply_markup=back_btn())
+        await cb.message.edit_text(f"Xatolik: {e}", reply_markup=back_btn())
 
 async def send_test_question(msg, state, questions, idx):
     if idx >= len(questions):
@@ -217,8 +218,7 @@ async def send_test_question(msg, state, questions, idx):
     kb.adjust(1)
     await msg.answer(
         f"*Savol {idx+1}/{len(questions)}*\n\n{q['q']}",
-        reply_markup=kb.as_markup(),
-        parse_mode="Markdown"
+        reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
 
 @dp.callback_query(F.data.startswith("testans_"))
@@ -265,7 +265,7 @@ async def send_quiz_question(msg, state, subject):
     total = data.get("quiz_total", 0)
     wait = await msg.answer("⏳ Savol tayyorlanmoqda...")
     try:
-        raw = ask_gemini(SYS["quiz"], f"{subject} fanidan savol bering")
+        raw = ask_ai(SYS["quiz"], f"{subject} fanidan savol bering")
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         q = json.loads(clean)
         await state.update_data(quiz_q=q)
@@ -277,8 +277,7 @@ async def send_quiz_question(msg, state, subject):
         await wait.delete()
         await msg.answer(
             f"🎯 *{subject}* | Bal: {score}/{total}\n\n{q['q']}",
-            reply_markup=kb.as_markup(),
-            parse_mode="Markdown"
+            reply_markup=kb.as_markup(), parse_mode="Markdown"
         )
     except Exception as e:
         await wait.edit_text(f"Xatolik: {e}", reply_markup=back_btn())
@@ -298,9 +297,7 @@ async def quiz_answer(cb: CallbackQuery, state: FSMContext):
         await cb.answer(f"❌ Noto'g'ri! To'g'risi: {q['a'][correct]}")
     explain = q.get("explain", "")
     await cb.message.edit_text(
-        f"{'✅' if j == correct else '❌'} {q['q']}\n\n"
-        f"To'g'ri javob: *{q['a'][correct]}*\n\n"
-        f"💡 {explain}",
+        f"{'✅' if j == correct else '❌'} {q['q']}\n\nTo'g'ri javob: *{q['a'][correct]}*\n\n💡 {explain}",
         reply_markup=InlineKeyboardBuilder().button(text="➡️ Keyingi", callback_data="quiz_next").button(text="🛑 Tugatish", callback_data="quiz_end").adjust(2).as_markup(),
         parse_mode="Markdown"
     )
@@ -338,7 +335,7 @@ async def konspekt_start(cb: CallbackQuery, state: FSMContext):
 async def konspekt_make(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Konspekt yaratilmoqda...")
     try:
-        result = ask_gemini(SYS["konspekt"], msg.text)
+        result = ask_ai(SYS["konspekt"], msg.text)
         await wait.delete()
         await msg.answer(result, reply_markup=back_btn())
     except Exception as e:
@@ -357,7 +354,7 @@ async def flashcard_start(cb: CallbackQuery, state: FSMContext):
 async def flashcard_make(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Kartalar yaratilmoqda...")
     try:
-        raw = ask_gemini(SYS["flashcard"], msg.text)
+        raw = ask_ai(SYS["flashcard"], msg.text)
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         data = json.loads(clean)
         cards = data.get("cards", [])
@@ -378,7 +375,6 @@ async def send_flashcard(msg, state):
     card = cards[idx]
     kb = InlineKeyboardBuilder()
     kb.button(text="👁 Javobni ko'rish", callback_data="card_flip")
-    kb.adjust(1)
     await msg.answer(
         f"🃏 *Karta {idx+1}/{len(cards)}*\n\n❓ {card['front']}",
         reply_markup=kb.as_markup(), parse_mode="Markdown"
@@ -420,7 +416,7 @@ async def tarjima_start(cb: CallbackQuery, state: FSMContext):
 async def tarjima_do(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Tarjima qilinmoqda...")
     try:
-        result = ask_gemini(SYS["tarjima"], msg.text)
+        result = ask_ai(SYS["tarjima"], msg.text)
         await wait.delete()
         await msg.answer(result, reply_markup=back_btn())
     except Exception as e:
@@ -445,7 +441,7 @@ async def formula_quick(cb: CallbackQuery, state: FSMContext):
     topic = cb.data.split("_", 1)[1]
     await cb.message.edit_text(f"⏳ {topic} tayyorlanmoqda...")
     try:
-        result = ask_gemini(SYS["formula"], topic)
+        result = ask_ai(SYS["formula"], topic)
         await cb.message.edit_text(result, reply_markup=back_btn())
     except Exception as e:
         await cb.message.edit_text(f"Xatolik: {e}", reply_markup=back_btn())
@@ -454,7 +450,7 @@ async def formula_quick(cb: CallbackQuery, state: FSMContext):
 async def formula_ask(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Tayyorlanmoqda...")
     try:
-        result = ask_gemini(SYS["formula"], msg.text)
+        result = ask_ai(SYS["formula"], msg.text)
         await wait.delete()
         await msg.answer(result, reply_markup=back_btn())
     except Exception as e:
@@ -468,7 +464,7 @@ async def cmd_menu(msg: Message, state: FSMContext):
 
 # ─── Run ──────────────────────────────────────────────────
 async def main():
-    print("🤖 Ziyrak Study Bot (Gemini) ishga tushdi!")
+    print("🤖 Ziyrak Study Bot (OpenRouter) ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
