@@ -10,14 +10,24 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_GROQ_KEY")
-MODEL = "llama-3.1-8b-instant"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ─── States ───────────────────────────────────────────────
+def ask_ai(system: str, user: str, history: list = []) -> str:
+    messages = [{"role": "system", "content": system}]
+    messages += history
+    messages.append({"role": "user", "content": user})
+    resp = httpx.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+        json={"model": "llama-3.1-8b-instant", "messages": messages, "max_tokens": 1500},
+        timeout=60,
+    )
+    return resp.json()["choices"][0]["message"]["content"]
+
 class Form(StatesGroup):
     tutor_chat   = State()
     test_waiting = State()
@@ -29,75 +39,19 @@ class Form(StatesGroup):
     tarjima      = State()
     formula      = State()
 
-# ─── AI helper ────────────────────────────────────────────
-def ask_ai(system: str, user: str, history: list = []) -> str:
-    messages = [{"role": "system", "content": system}]
-    messages += history
-    messages.append({"role": "user", "content": user})
-
-    resp = httpx.post(
-    "https://api.groq.com/openai/v1/chat/completions",
-    headers={
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={"model": MODEL, "messages": messages},
-        timeout=60,
-    )
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
-
-# ─── System prompts ───────────────────────────────────────
 SYS = {
-    "tutor": (
-        "Siz Ziyrak — O'zbek tilida javob beruvchi aqlli o'quv yordamchisisiz. "
-        "Savollarga aniq, sodda va tushunarli tarzda javob bering. "
-        "Murakkab mavzularni oddiy misollar bilan tushuntiring. "
-        "Javoblaringizni yaxshi formatlang. Telegram Markdown ishlatmang, oddiy matn yozing."
-    ),
-    "test": (
-        "Siz test yaratuvchi botasiz. FAQAT JSON formatida javob bering, hech qanday qo'shimcha matn yo'q.\n"
-        '{"questions":[{"q":"savol","a":["A","B","C","D"],"correct":0}]}\n'
-        "correct — to'g'ri javob indeksi (0-3). Savollar o'zbek tilida."
-    ),
-    "quiz": (
-        "Siz quiz o'tkazuvchi botasiz. FAQAT JSON formatida bitta savol bering:\n"
-        '{"q":"savol","a":["A","B","C","D"],"correct":0,"explain":"qisqa tushuntirish"}'
-    ),
-    "konspekt": (
-        "Siz konspekt yaratuvchi botasiz. Katta matnni qisqacha konspektga aylantiring.\n\n"
-        "Format:\n📌 ASOSIY MAVZU\n[mavzu]\n\n🔑 MUHIM NUQTALAR\n• nuqta 1\n• nuqta 2\n\n💡 XULOSA\n[xulosa]"
-    ),
-    "flashcard": (
-        "Siz flashcard yaratuvchi botasiz. FAQAT JSON formatida javob bering:\n"
-        '{"cards":[{"front":"savol yoki atama","back":"javob yoki ta\'rif"}]}\n'
-        "5-8 ta karta yarating."
-    ),
-    "tarjima": (
-        "Siz tarjimon botasiz. O'zbek, ingliz va rus tillarida tarjima qiling. "
-        "Tarjimadan tashqari so'zning ma'nosi va 1-2 ta misol jumlalar ham bering. "
-        "Javobni oddiy matn formatida bering."
-    ),
-    "formula": (
-        "Siz formula yordamchisi botasiz. Matematika, fizika va kimyo formulalarini tushuntiring.\n"
-        "1. Formulani ko'rsating\n2. Har bir belgini izohlang\n3. Qachon ishlatilishini tushuntiring\n4. Misol keltiring\n"
-        "Javobni o'zbek tilida, oddiy matn formatida bering."
-    ),
+    "tutor": "Siz Ziyrak — O'zbek tilida javob beruvchi aqlli o'quv yordamchisisiz. Savollarga aniq, sodda va tushunarli tarzda javob bering. Murakkab mavzularni oddiy misollar bilan tushuntiring.",
+    "test": 'Siz test yaratuvchi botasiz. FAQAT JSON formatida javob bering, hech qanday qoshimcha matn yoq.\n{"questions":[{"q":"savol","a":["A","B","C","D"],"correct":0}]}\ncorrect — togri javob indeksi (0-3). Savollar ozbek tilida.',
+    "quiz": 'Siz quiz otkazuvchi botasiz. FAQAT JSON formatida bitta savol bering:\n{"q":"savol","a":["A","B","C","D"],"correct":0,"explain":"qisqa tushuntirish"}',
+    "konspekt": "Siz konspekt yaratuvchi botasiz. Katta matnni qisqacha konspektga aylantiring.\nFormat:\n📌 ASOSIY MAVZU\n\n🔑 MUHIM NUQTALAR\n• nuqta\n\n💡 XULOSA",
+    "flashcard": 'Siz flashcard yaratuvchi botasiz. FAQAT JSON formatida javob bering:\n{"cards":[{"front":"savol","back":"javob"}]}\n6 ta karta yarating.',
+    "tarjima": "Siz tarjimon botasiz. Ozbek, ingliz va rus tillarida tarjima qiling. Tarjima, mazni va misol jumlalar bering.",
+    "formula": "Siz formula yordamchisi botasiz. Matematika, fizika va kimyo formulalarini tushuntiring. Formula, belgilar izohi, misol keltiring. Ozbek tilida.",
 }
 
-# ─── Keyboards ────────────────────────────────────────────
 def main_menu():
     kb = InlineKeyboardBuilder()
-    buttons = [
-        ("🧠 AI Tutor",       "mode_tutor"),
-        ("📝 Test Generator", "mode_test"),
-        ("🎯 Quiz Mode",      "mode_quiz"),
-        ("📋 Konspekt",       "mode_konspekt"),
-        ("🃏 Flashcard",      "mode_flashcard"),
-        ("🌐 Tarjima",        "mode_tarjima"),
-        ("⚗️ Formulalar",     "mode_formula"),
-    ]
-    for text, data in buttons:
+    for text, data in [("🧠 AI Tutor","mode_tutor"),("📝 Test Generator","mode_test"),("🎯 Quiz Mode","mode_quiz"),("📋 Konspekt","mode_konspekt"),("🃏 Flashcard","mode_flashcard"),("🌐 Tarjima","mode_tarjima"),("⚗️ Formulalar","mode_formula")]:
         kb.button(text=text, callback_data=data)
     kb.adjust(2)
     return kb.as_markup()
@@ -107,37 +61,26 @@ def back_btn():
     kb.button(text="🏠 Bosh menyu", callback_data="menu")
     return kb.as_markup()
 
-# ─── /start ───────────────────────────────────────────────
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
-    await msg.answer(
-        "🎓 *Ziyrak Study Bot*ga xush kelibsiz!\n\n"
-        "Men sizning aqlli o'quv yordamchingizman.\n"
-        "Quyidagi bo'limlardan birini tanlang:",
-        reply_markup=main_menu(),
-        parse_mode="Markdown"
-    )
+    await msg.answer("🎓 *Ziyrak Study Bot*ga xush kelibsiz!\n\nBo'lim tanlang:", reply_markup=main_menu(), parse_mode="Markdown")
+
+@dp.message(Command("menu"))
+async def cmd_menu(msg: Message, state: FSMContext):
+    await state.clear()
+    await msg.answer("🎓 Bo'lim tanlang:", reply_markup=main_menu())
 
 @dp.callback_query(F.data == "menu")
 async def go_menu(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    await cb.message.edit_text(
-        "🎓 *Ziyrak Study Bot*\n\nBo'lim tanlang:",
-        reply_markup=main_menu(),
-        parse_mode="Markdown"
-    )
+    await cb.message.edit_text("🎓 *Ziyrak Study Bot*\n\nBo'lim tanlang:", reply_markup=main_menu(), parse_mode="Markdown")
 
-# ─── AI TUTOR ─────────────────────────────────────────────
 @dp.callback_query(F.data == "mode_tutor")
 async def tutor_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.tutor_chat)
     await state.update_data(history=[])
-    await cb.message.edit_text(
-        "🧠 *AI Tutor*\n\nIstalgan fan yoki mavzu bo'yicha savol bering!\n"
-        "Matematika, Fizika, Tarix, Kimyo...\n\nChiqish uchun /menu yozing.",
-        reply_markup=back_btn(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text("🧠 *AI Tutor*\n\nIstalgan fan bo'yicha savol bering!\n\nChiqish: /menu", reply_markup=back_btn(), parse_mode="Markdown")
 
 @dp.message(Form.tutor_chat)
 async def tutor_answer(msg: Message, state: FSMContext):
@@ -154,15 +97,10 @@ async def tutor_answer(msg: Message, state: FSMContext):
     except Exception as e:
         await thinking.edit_text(f"Xatolik: {e}")
 
-# ─── TEST GENERATOR ───────────────────────────────────────
 @dp.callback_query(F.data == "mode_test")
 async def test_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.test_waiting)
-    await cb.message.edit_text(
-        "📝 *Test Generator*\n\nO'qish materialingizni yuboring.\n"
-        "Matn, paragraf yoki mavzu yozing — men test yarataman!",
-        reply_markup=back_btn(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text("📝 *Test Generator*\n\nMatn yuboring — test yarataman!", reply_markup=back_btn(), parse_mode="Markdown")
 
 @dp.message(Form.test_waiting)
 async def test_got_text(msg: Message, state: FSMContext):
@@ -172,19 +110,17 @@ async def test_got_text(msg: Message, state: FSMContext):
     for n in [5, 10, 20]:
         kb.button(text=f"{n} ta savol", callback_data=f"testcount_{n}")
     kb.adjust(3)
-    await msg.answer("Nechta savol kerak?", reply_markup=kb.as_markup())
+    await msg.answer("Nechta savol?", reply_markup=kb.as_markup())
 
 @dp.callback_query(F.data.startswith("testcount_"))
 async def test_generate(cb: CallbackQuery, state: FSMContext):
     n = int(cb.data.split("_")[1])
     data = await state.get_data()
-    text = data.get("test_text", "")
     await cb.message.edit_text(f"⏳ {n} ta savol yaratilmoqda...")
     try:
-        raw = ask_ai(SYS["test"], f"{text}\n\nYuqoridagi matndan {n} ta test savoli yarating.")
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        parsed = json.loads(clean)
-        questions = parsed.get("questions", [])
+        raw = ask_ai(SYS["test"], f"{data['test_text']}\n\n{n} ta test savoli yarating.")
+        clean = raw.strip().strip("```json").strip("```").strip()
+        questions = json.loads(clean)["questions"]
         await state.update_data(questions=questions, q_idx=0, score=0, answers=[])
         await state.set_state(Form.quiz_active)
         await send_test_question(cb.message, state, questions, 0)
@@ -196,16 +132,15 @@ async def send_test_question(msg, state, questions, idx):
         data = await state.get_data()
         score = data.get("score", 0)
         total = len(questions)
-        pct = round(score / total * 100)
+        pct = round(score/total*100)
         emoji = "🏆" if pct >= 80 else "👍" if pct >= 50 else "📚"
-        text = f"{emoji} *Test yakunlandi!*\n\n✅ To'g'ri: {score}/{total} ({pct}%)\n\n"
+        text = f"{emoji} *Test yakunlandi!*\n\n✅ {score}/{total} ({pct}%)\n\n"
         answers = data.get("answers", [])
         for i, q in enumerate(questions):
-            user_ans = answers[i] if i < len(answers) else -1
-            ok = user_ans == q["correct"]
+            ua = answers[i] if i < len(answers) else -1
+            ok = ua == q["correct"]
             text += f"{'✅' if ok else '❌'} {i+1}. {q['q']}\n"
             if not ok:
-                text += f"   Siz: {q['a'][user_ans] if 0 <= user_ans < 4 else '?'}\n"
                 text += f"   To'g'ri: {q['a'][q['correct']]}\n"
             text += "\n"
         await state.clear()
@@ -216,10 +151,7 @@ async def send_test_question(msg, state, questions, idx):
     for j, opt in enumerate(q["a"]):
         kb.button(text=f"{['A','B','C','D'][j]}. {opt}", callback_data=f"testans_{j}")
     kb.adjust(1)
-    await msg.answer(
-        f"*Savol {idx+1}/{len(questions)}*\n\n{q['q']}",
-        reply_markup=kb.as_markup(), parse_mode="Markdown"
-    )
+    await msg.answer(f"*Savol {idx+1}/{len(questions)}*\n\n{q['q']}", reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data.startswith("testans_"))
 async def test_answer(cb: CallbackQuery, state: FSMContext):
@@ -235,17 +167,15 @@ async def test_answer(cb: CallbackQuery, state: FSMContext):
         score += 1
         await cb.answer("✅ To'g'ri!")
     else:
-        await cb.answer(f"❌ Noto'g'ri! To'g'risi: {q['a'][q['correct']]}")
+        await cb.answer(f"❌ To'g'risi: {q['a'][q['correct']]}")
     await state.update_data(q_idx=idx+1, score=score, answers=answers)
     await cb.message.delete()
     await send_test_question(cb.message, state, questions, idx+1)
 
-# ─── QUIZ MODE ────────────────────────────────────────────
 @dp.callback_query(F.data == "mode_quiz")
 async def quiz_start(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(Form.quiz_subject)
     kb = InlineKeyboardBuilder()
-    for s in ["Matematika", "Fizika", "Kimyo", "Biologiya", "Tarix", "Ingliz tili"]:
+    for s in ["Matematika","Fizika","Kimyo","Biologiya","Tarix","Ingliz tili"]:
         kb.button(text=s, callback_data=f"quizsub_{s}")
     kb.adjust(2)
     kb.button(text="🏠 Bosh menyu", callback_data="menu")
@@ -266,7 +196,7 @@ async def send_quiz_question(msg, state, subject):
     wait = await msg.answer("⏳ Savol tayyorlanmoqda...")
     try:
         raw = ask_ai(SYS["quiz"], f"{subject} fanidan savol bering")
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = raw.strip().strip("```json").strip("```").strip()
         q = json.loads(clean)
         await state.update_data(quiz_q=q)
         kb = InlineKeyboardBuilder()
@@ -275,10 +205,7 @@ async def send_quiz_question(msg, state, subject):
         kb.adjust(1)
         kb.button(text="🛑 Tugatish", callback_data="quiz_end")
         await wait.delete()
-        await msg.answer(
-            f"🎯 *{subject}* | Bal: {score}/{total}\n\n{q['q']}",
-            reply_markup=kb.as_markup(), parse_mode="Markdown"
-        )
+        await msg.answer(f"🎯 *{subject}* | Bal: {score}/{total}\n\n{q['q']}", reply_markup=kb.as_markup(), parse_mode="Markdown")
     except Exception as e:
         await wait.edit_text(f"Xatolik: {e}", reply_markup=back_btn())
 
@@ -294,46 +221,40 @@ async def quiz_answer(cb: CallbackQuery, state: FSMContext):
         score += 1
         await cb.answer("✅ To'g'ri! +1 ball")
     else:
-        await cb.answer(f"❌ Noto'g'ri! To'g'risi: {q['a'][correct]}")
-    explain = q.get("explain", "")
+        await cb.answer(f"❌ To'g'risi: {q['a'][correct]}")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➡️ Keyingi", callback_data="quiz_next")
+    kb.button(text="🛑 Tugatish", callback_data="quiz_end")
+    kb.adjust(2)
     await cb.message.edit_text(
-        f"{'✅' if j == correct else '❌'} {q['q']}\n\nTo'g'ri javob: *{q['a'][correct]}*\n\n💡 {explain}",
-        reply_markup=InlineKeyboardBuilder().button(text="➡️ Keyingi", callback_data="quiz_next").button(text="🛑 Tugatish", callback_data="quiz_end").adjust(2).as_markup(),
-        parse_mode="Markdown"
+        f"{'✅' if j==correct else '❌'} {q['q']}\n\nTo'g'ri: *{q['a'][correct]}*\n\n💡 {q.get('explain','')}",
+        reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
     await state.update_data(quiz_score=score, quiz_total=total)
 
 @dp.callback_query(F.data == "quiz_next")
 async def quiz_next(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    subject = data.get("quiz_subject", "Fan")
     await cb.message.delete()
-    await send_quiz_question(cb.message, state, subject)
+    await send_quiz_question(cb.message, state, data.get("quiz_subject", "Fan"))
 
 @dp.callback_query(F.data == "quiz_end")
 async def quiz_end(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     score = data.get("quiz_score", 0)
     total = data.get("quiz_total", 0)
-    pct = round(score / total * 100) if total else 0
-    await cb.message.edit_text(
-        f"🏁 *Quiz yakunlandi!*\n\n🏆 {score}/{total} ({pct}%)",
-        reply_markup=back_btn(), parse_mode="Markdown"
-    )
+    pct = round(score/total*100) if total else 0
+    await cb.message.edit_text(f"🏁 *Quiz yakunlandi!*\n\n🏆 {score}/{total} ({pct}%)", reply_markup=back_btn(), parse_mode="Markdown")
     await state.clear()
 
-# ─── KONSPEKT ─────────────────────────────────────────────
 @dp.callback_query(F.data == "mode_konspekt")
 async def konspekt_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.konspekt)
-    await cb.message.edit_text(
-        "📋 *Konspekt Yaratuvchi*\n\nKatta matnni yuboring — men qisqa konspekt yasayman!",
-        reply_markup=back_btn(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text("📋 *Konspekt*\n\nKatta matn yuboring!", reply_markup=back_btn(), parse_mode="Markdown")
 
 @dp.message(Form.konspekt)
 async def konspekt_make(msg: Message, state: FSMContext):
-    wait = await msg.answer("⏳ Konspekt yaratilmoqda...")
+    wait = await msg.answer("⏳ Yaratilmoqda...")
     try:
         result = ask_ai(SYS["konspekt"], msg.text)
         await wait.delete()
@@ -341,23 +262,18 @@ async def konspekt_make(msg: Message, state: FSMContext):
     except Exception as e:
         await wait.edit_text(f"Xatolik: {e}")
 
-# ─── FLASHCARD ────────────────────────────────────────────
 @dp.callback_query(F.data == "mode_flashcard")
 async def flashcard_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.flashcard)
-    await cb.message.edit_text(
-        "🃏 *Flashcard Mode*\n\nMavzu yoki matn yuboring — men kartalar yasayman!",
-        reply_markup=back_btn(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text("🃏 *Flashcard*\n\nMavzu yoki matn yuboring!", reply_markup=back_btn(), parse_mode="Markdown")
 
 @dp.message(Form.flashcard)
 async def flashcard_make(msg: Message, state: FSMContext):
     wait = await msg.answer("⏳ Kartalar yaratilmoqda...")
     try:
         raw = ask_ai(SYS["flashcard"], msg.text)
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        data = json.loads(clean)
-        cards = data.get("cards", [])
+        clean = raw.strip().strip("```json").strip("```").strip()
+        cards = json.loads(clean)["cards"]
         await wait.delete()
         await state.update_data(cards=cards, card_idx=0)
         await send_flashcard(msg, state)
@@ -375,10 +291,7 @@ async def send_flashcard(msg, state):
     card = cards[idx]
     kb = InlineKeyboardBuilder()
     kb.button(text="👁 Javobni ko'rish", callback_data="card_flip")
-    await msg.answer(
-        f"🃏 *Karta {idx+1}/{len(cards)}*\n\n❓ {card['front']}",
-        reply_markup=kb.as_markup(), parse_mode="Markdown"
-    )
+    await msg.answer(f"🃏 *{idx+1}/{len(cards)}*\n\n❓ {card['front']}", reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "card_flip")
 async def card_flip(cb: CallbackQuery, state: FSMContext):
@@ -390,27 +303,19 @@ async def card_flip(cb: CallbackQuery, state: FSMContext):
     kb.button(text="✅ Bildim", callback_data="card_knew")
     kb.button(text="❌ Bilmadim", callback_data="card_next")
     kb.adjust(2)
-    await cb.message.edit_text(
-        f"🃏 *Karta {idx+1}/{len(cards)}*\n\n❓ {card['front']}\n\n✅ {card['back']}",
-        reply_markup=kb.as_markup(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text(f"🃏 *{idx+1}/{len(cards)}*\n\n❓ {card['front']}\n\n✅ {card['back']}", reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data.in_({"card_knew", "card_next"}))
 async def card_next(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    idx = data.get("card_idx", 0)
-    await state.update_data(card_idx=idx+1)
+    await state.update_data(card_idx=data.get("card_idx", 0) + 1)
     await cb.message.delete()
     await send_flashcard(cb.message, state)
 
-# ─── TARJIMA ──────────────────────────────────────────────
 @dp.callback_query(F.data == "mode_tarjima")
 async def tarjima_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.tarjima)
-    await cb.message.edit_text(
-        "🌐 *Tarjima va Lug'at*\n\nSo'z yoki matn yuboring.\nO'zbek ↔ Ingliz ↔ Rus",
-        reply_markup=back_btn(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text("🌐 *Tarjima*\n\nSo'z yoki matn yuboring.\nUZ ↔ EN ↔ RU", reply_markup=back_btn(), parse_mode="Markdown")
 
 @dp.message(Form.tarjima)
 async def tarjima_do(msg: Message, state: FSMContext):
@@ -422,21 +327,17 @@ async def tarjima_do(msg: Message, state: FSMContext):
     except Exception as e:
         await wait.edit_text(f"Xatolik: {e}")
 
-# ─── FORMULA ──────────────────────────────────────────────
 @dp.callback_query(F.data == "mode_formula")
 async def formula_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Form.formula)
     kb = InlineKeyboardBuilder()
-    for q in ["Pifagor teoremasi", "F=ma", "E=mc²", "Ohm qonuni", "Kvadrat tenglama"]:
-        kb.button(text=q, callback_data=f"formula_{q}")
+    for q in ["Pifagor teoremasi","F=ma","E=mc²","Ohm qonuni","Kvadrat tenglama"]:
+        kb.button(text=q, callback_data=f"fml_{q}")
     kb.adjust(2)
     kb.button(text="🏠 Bosh menyu", callback_data="menu")
-    await cb.message.edit_text(
-        "⚗️ *Formula Yordamchisi*\n\nFormula yoki mavzu yuboring:",
-        reply_markup=kb.as_markup(), parse_mode="Markdown"
-    )
+    await cb.message.edit_text("⚗️ *Formulalar*\n\nFormula yoki mavzu yuboring:", reply_markup=kb.as_markup(), parse_mode="Markdown")
 
-@dp.callback_query(F.data.startswith("formula_"))
+@dp.callback_query(F.data.startswith("fml_"))
 async def formula_quick(cb: CallbackQuery, state: FSMContext):
     topic = cb.data.split("_", 1)[1]
     await cb.message.edit_text(f"⏳ {topic} tayyorlanmoqda...")
@@ -456,17 +357,10 @@ async def formula_ask(msg: Message, state: FSMContext):
     except Exception as e:
         await wait.edit_text(f"Xatolik: {e}")
 
-# ─── /menu ────────────────────────────────────────────────
-@dp.message(Command("menu"))
-async def cmd_menu(msg: Message, state: FSMContext):
-    await state.clear()
-    await msg.answer("🎓 Ziyrak Study Bot\n\nBo'lim tanlang:", reply_markup=main_menu())
-
-# ─── Run ──────────────────────────────────────────────────
 async def main():
-    print("🤖 Ziyrak Study Bot (OpenRouter) ishga tushdi!")
+    print("🤖 Ziyrak Study Bot (Groq) ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+        
